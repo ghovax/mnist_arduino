@@ -15,7 +15,9 @@ uint8_t frame_buffer[BYTES_PER_FRAME];
 void setup() {
   // Initialize serial communication
   Serial.begin(115200);
-  while (!Serial);  // Wait for serial connection
+  while (!Serial) {
+    ; // Wait for serial port to connect
+  } 
 
   pinMode(LED_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);  // Configure button pin with internal pull-up resistor 

@@ -7,11 +7,9 @@ import logging
 import sys
 import numpy as np
 from PIL import Image
-import select
-import cv2
-from typing import Union
-
-## --------------------------- Terminal setup for colors and logging --------------------------- ##
+import hashlib
+import shutil
+import argparse
 
 # ANSI escape codes for colors
 class Colors:
@@ -62,19 +60,38 @@ def setup_logging():
 
 logger = setup_logging()
 
-## --------------------------- The actual Arduino code begins here --------------------------- ##
+def setup_argument_parser():
+    """Configure command line argument parser."""
+    parser = argparse.ArgumentParser(description='Arduino camera image capture utility')
+    parser.add_argument('--force-compile', action='store_true',
+                       help='Force recompilation of Arduino sketch even if unchanged')
+    return parser
 
 # Find the port where Arduino is connected.
 def find_arduino_port():
     """Find the port where Arduino is connected."""
     ports = list(serial.tools.list_ports.comports())
+    logger.info(f"Found {len(ports)} serial ports")
+    
     for port in ports:
+        logger.info(f"Currently checking port {port.device} ({port.description})")
         if "Arduino" in port.description or "usbmodem" in port.device:
             logger.debug(f"Found Arduino to connect to: {port.description} on {port.device}")
-            return port.device
             
-    port_list = [f"{p.device}: {p.description}" for p in ports]
-    logger.error(f"No Arduino found. Available ports: [{', '.join(port_list)}]")
+            # Test if port is actually available
+            try:
+                test_connection = serial.Serial(port.device, baudrate=115200, timeout=1)
+                test_connection.close()
+                logger.debug("Port is available for connection")
+                return port.device
+            except serial.SerialException as e:
+                logger.warning(f"Port found but not available: {str(e)}")
+                continue
+        else:
+            logger.warning(f"No Arduino found on port {port.device}")
+            
+    port_list = [f"{p.device}" for p in ports]
+    logger.error(f"No Arduino found. Available ports: {port_list}")
     return None
 
 # Compile the Arduino sketch.
@@ -113,7 +130,7 @@ def flash_arduino(port, hex_file):
             logger.error(f"Cannot find {hex_file}, please compile the sketch first")
             return False
 
-        logger.info("Flashing Arduino...")
+        logger.info("Flashing Arduino... please wait, it may take up to 30s")
         start_time = time.time()
 
         cmd = [
@@ -124,7 +141,7 @@ def flash_arduino(port, hex_file):
             "--input-dir", os.path.dirname(hex_file),  # Use the build directory for input
             "camera"
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True)
         
         elapsed_time = time.time() - start_time
         
@@ -159,46 +176,187 @@ def receive_image_data(arduino, width=176, height=144):
     
     return image_data
 
-def main():
+def get_file_hash(file_path):
+    """Calculate SHA-256 hash of a file."""
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+def has_sketch_changed():
+    """Check if the Arduino sketch has changed since last compilation."""
+    sketch_path = "camera/camera.ino"
+    cached_sketch = "build/camera.ino.cached"
+    
+    # If no cached version exists, sketch has effectively changed
+    if not os.path.exists(cached_sketch):
+        return True
+        
+    current_hash = get_file_hash(sketch_path)
+    cached_hash = get_file_hash(cached_sketch)
+    
+    return current_hash != cached_hash
+
+def update_cached_sketch():
+    """Update the cached version of the sketch."""
+    sketch_path = "camera/camera.ino"
+    cached_sketch = "build/camera.ino.cached"
+    os.makedirs(os.path.dirname(cached_sketch), exist_ok=True)
+    shutil.copy2(sketch_path, cached_sketch)
+
+def acquire_image(force_compile=False):
     try:
         port = find_arduino_port()
         if not port:
-            return
+            return False  # Return False if no Arduino found
 
-        if not compile_sketch():
-            return
-
-        hex_file = "build/camera.ino.with_bootloader.hex"
+        needs_flashing = has_sketch_changed() or force_compile
         
-        if flash_arduino(port, hex_file):
-            # Use higher baudrate for image data
-            arduino = serial.Serial(port=port, baudrate=115200, timeout=5)
-            logger.warning("Waiting for Arduino to reset...")
-            time.sleep(2)  # Wait for Arduino to reset
+        if needs_flashing:
+            reason = "forced" if force_compile else "sketch changed"
+            logger.warning(f"Recompiling the Arduino sketch ({reason})...")
+            if not compile_sketch():
+                return False
+            update_cached_sketch()
             
-            logger.debug("Arduino connected! Press Ctrl+C to exit")
+            hex_file = "build/camera.ino.with_bootloader.hex"
+            if not flash_arduino(port, hex_file):
+                return False
+        else:
+            logger.warning("Sketch unchanged, skipping compilation and flash")
 
-            # Send command to capture image
-            arduino.write(b'c')
-            
-            # Receive and process image
-            image_data = receive_image_data(arduino)
-            if image_data is not None:
-                # Save the grayscale image
-                image = Image.fromarray(image_data, mode='L')  # 'L' mode for grayscale
-                image.save('image.png')
-                logger.debug("Grayscale image saved as 'image.png'")
-            else:
-                logger.error("Failed to receive image data")
+        logger.info("Attempting to clear serial port...")
+        try:
+            # Force close any existing connections
+            subprocess.run(['killall', '-9', 'screen'], stderr=subprocess.DEVNULL)  # Kill any screen sessions
+            time.sleep(0.5)
+        except:
+            pass
 
-            raise KeyboardInterrupt
+        connection_attempts = 3
+        for attempt in range(connection_attempts):
+            try:
+                logger.info(f"Connection attempt {attempt + 1}/{connection_attempts}...")
+                
+                # Set very short timeout for initial connection
+                arduino = serial.Serial(
+                    port=port,
+                    baudrate=115200,
+                    timeout=2,
+                    write_timeout=2,
+                    inter_byte_timeout=1
+                )
+                
+                logger.info("Serial object created, checking if open...")
+                
+                if not arduino.is_open:
+                    logger.warning("Port not open, attempting to open...")
+                    arduino.open()
+                
+                if arduino.is_open:
+                    logger.debug("Serial connection established!")
+                    arduino.reset_input_buffer()
+                    arduino.reset_output_buffer()
+                    break
+                else:
+                    raise serial.SerialException("Failed to open port")
                     
+            except serial.SerialException as e:
+                logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                try:
+                    arduino.close()
+                except:
+                    pass
+                
+                if attempt < connection_attempts - 1:
+                    logger.info("Waiting before retry...")
+                    time.sleep(2)
+                else:
+                    logger.error("All connection attempts failed")
+                    return False
+        
+        # Flush any existing data
+        arduino.reset_input_buffer()
+        arduino.reset_output_buffer()
+
+        # TODO: Should we wait for the Arduino to reset?
+        # logger.warning("Waiting for Arduino to reset...")
+        # time.sleep(2)  # Wait for Arduino to reset
+                
+        # Send command and verify it was sent
+        bytes_written = arduino.write(b'c')
+        if bytes_written != 1:
+            logger.error(f"Failed to send capture command (wrote {bytes_written} bytes)")
+            arduino.close()
+            return False
+        
+        logger.debug("Capture command sent successfully")
+        
+        # Receive and process image
+        image_data = receive_image_data(arduino)
+        if image_data is not None:
+            # Save the grayscale image
+            image = Image.fromarray(image_data, mode='L')  # 'L' mode for grayscale
+            image.save('image.png')
+            logger.debug("Grayscale image saved as 'image.png'")
+            return True  # Return True on successful image acquisition
+        else:
+            logger.error("Failed to receive image data")
+            return False
+
     except KeyboardInterrupt:
         logger.warning("Closing connection...")
         if 'arduino' in locals():
             arduino.close()
+        return False
     except Exception as e:
         logger.error(f"Error: {str(e)}")
+        return False
+
+def threshold_image(image_path: str, output_path: str, threshold: int = 100):
+    """
+    Process the image to make lighter pixels transparent and keep darker pixels.
+    
+    Args:
+        image_path (str): Path to the input image
+        output_path (str): Path to save the processed image
+        threshold (int): Pixel values below this will be kept (0-255), default 100
+    """
+    # Read the image
+    img = Image.open(image_path).convert('L')
+    img_array = np.array(img)
+    
+    # Create an RGBA array (same width and height, but 4 channels)
+    height, width = img_array.shape
+    rgba_array = np.zeros((height, width, 4), dtype=np.uint8)
+    
+    # Set RGB channels to black (0)
+    rgba_array[..., 0:3] = 0
+    
+    # Set alpha channel based on threshold
+    # Pixels darker than threshold will be visible (alpha = 255)
+    # Pixels lighter than threshold will be transparent (alpha = 0)
+    rgba_array[..., 3] = np.where(img_array < threshold, 255, 0)
+    
+    # Create PIL image and save
+    processed_img = Image.fromarray(rgba_array, mode='RGBA')
+    processed_img.save(output_path, format='PNG')
+    logger.debug("Processed image saved as 'processed_image.png'")
+    
+    return processed_img
+
+def main():
+    parser = setup_argument_parser()
+    args = parser.parse_args()
+    
+    # Only process image if acquisition was successful
+    if acquire_image(force_compile=args.force_compile):
+        # Process the acquired image to make light pixels transparent
+        threshold_image('image.png', 'processed_image.png', threshold=100)
+    else:
+        logger.warning("Skipping image processing due to acquisition failure")
 
 if __name__ == "__main__":
     main()
+
