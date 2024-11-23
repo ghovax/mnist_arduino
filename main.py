@@ -123,14 +123,14 @@ def compile_sketch():
         return False
 
 # Flash the Arduino with the compiled hex file.
-def flash_arduino(port, hex_file):
+def flash_arduino(port, hex_file, timeout=30):
     """Flash the Arduino with the provided hex file."""
     try:
         if not os.path.exists(hex_file):
             logger.error(f"Cannot find {hex_file}, please compile the sketch first")
             return False
 
-        logger.info("Flashing Arduino... please wait, it may take up to 30s")
+        logger.info(f"Flashing Arduino... please wait, it may take up to {timeout}s")
         start_time = time.time()
 
         cmd = [
@@ -157,24 +157,44 @@ def flash_arduino(port, hex_file):
         logger.error(f"Flash failed after {elapsed_time:.1f}s: {str(e)}")
         return False
 
-def receive_image_data(arduino, width=176, height=144):
+def receive_image_data(arduino, width=176, height=144, timeout=10):
     """Receive grayscale image data from Arduino."""
-    logger.info("Waiting for image data...")
+    logger.info(f"Waiting for image data... please wait, it may take up to {timeout}s")
     
     # Calculate expected bytes (1 byte per pixel for grayscale)
     expected_bytes = width * height
+    received_bytes = 0
+    raw_data = bytearray()
     
-    # Read the raw bytes
-    raw_data = arduino.read(expected_bytes)
-    if len(raw_data) != expected_bytes:
-        logger.error(f"Received incomplete data: {len(raw_data)} vs {expected_bytes} bytes")
+    # Set timeout for entire operation (10 seconds)
+    start_time = time.time()
+    
+    while received_bytes < expected_bytes:
+        if time.time() - start_time > timeout:
+            logger.error(f"Timeout after {timeout}s waiting for image data")
+            return None
+            
+        # Read data in chunks
+        chunk = arduino.read(min(1024, expected_bytes - received_bytes))
+        if not chunk:  # No data received
+            logger.error("No data received from Arduino, aborting")
+            return None
+            
+        raw_data.extend(chunk)
+        received_bytes = len(raw_data)
+    
+    if received_bytes != expected_bytes:
+        logger.error(f"Received incomplete data: {received_bytes} vs {expected_bytes} bytes")
         return None
     
-    # Convert raw bytes to numpy array and reshape to 2D
-    image_data = np.frombuffer(raw_data, dtype=np.uint8)
-    image_data = image_data.reshape((height, width))
-    
-    return image_data
+    try:
+        # Convert raw bytes to numpy array and reshape to 2D
+        image_data = np.frombuffer(raw_data, dtype=np.uint8)
+        image_data = image_data.reshape((height, width))
+        return image_data
+    except Exception as e:
+        logger.error(f"Failed to process image data: {str(e)}")
+        return None
 
 def get_file_hash(file_path):
     """Calculate SHA-256 hash of a file."""
@@ -214,14 +234,14 @@ def acquire_image(force_compile=False):
         needs_flashing = has_sketch_changed() or force_compile
         
         if needs_flashing:
-            reason = "forced" if force_compile else "sketch changed"
+            reason = "forced by the user" if force_compile else "sketch changed"
             logger.warning(f"Recompiling the Arduino sketch ({reason})...")
             if not compile_sketch():
                 return False
             update_cached_sketch()
             
             hex_file = "build/camera.ino.with_bootloader.hex"
-            if not flash_arduino(port, hex_file):
+            if not flash_arduino(port, hex_file, timeout=60):
                 return False
         else:
             logger.warning("Sketch unchanged, skipping compilation and flash")
@@ -234,55 +254,46 @@ def acquire_image(force_compile=False):
         except:
             pass
 
-        connection_attempts = 3
-        for attempt in range(connection_attempts):
+        try:
+            logger.info("Attempting to connect...")
+            
+            # Increase timeout for more reliable data transfer
+            arduino = serial.Serial(
+                port=port,
+                baudrate=115200,
+                timeout=5,
+                write_timeout=2,
+                inter_byte_timeout=1
+            )
+            
+            logger.info("Serial object created, checking if open...")
+            
+            if not arduino.is_open:
+                logger.warning("Port not open, attempting to open...")
+                arduino.open()
+            
+            if arduino.is_open:
+                logger.debug("Serial connection established!")
+                arduino.reset_input_buffer()
+                arduino.reset_output_buffer()
+                
+                # Add delay after connection to let Arduino stabilize
+                logger.warning("Waiting for Arduino to initialize...")
+                time.sleep(1)
+            else:
+                raise serial.SerialException("Failed to open port")
+                
+        except serial.SerialException as e:
+            logger.error(f"Connection failed: {str(e)}")
             try:
-                logger.info(f"Connection attempt {attempt + 1}/{connection_attempts}...")
-                
-                # Set very short timeout for initial connection
-                arduino = serial.Serial(
-                    port=port,
-                    baudrate=115200,
-                    timeout=2,
-                    write_timeout=2,
-                    inter_byte_timeout=1
-                )
-                
-                logger.info("Serial object created, checking if open...")
-                
-                if not arduino.is_open:
-                    logger.warning("Port not open, attempting to open...")
-                    arduino.open()
-                
-                if arduino.is_open:
-                    logger.debug("Serial connection established!")
-                    arduino.reset_input_buffer()
-                    arduino.reset_output_buffer()
-                    break
-                else:
-                    raise serial.SerialException("Failed to open port")
-                    
-            except serial.SerialException as e:
-                logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
-                try:
-                    arduino.close()
-                except:
-                    pass
-                
-                if attempt < connection_attempts - 1:
-                    logger.info("Waiting before retry...")
-                    time.sleep(2)
-                else:
-                    logger.error("All connection attempts failed")
-                    return False
+                arduino.close()
+            except:
+                pass
+            return False
         
         # Flush any existing data
         arduino.reset_input_buffer()
         arduino.reset_output_buffer()
-
-        # TODO: Should we wait for the Arduino to reset?
-        # logger.warning("Waiting for Arduino to reset...")
-        # time.sleep(2)  # Wait for Arduino to reset
                 
         # Send command and verify it was sent
         bytes_written = arduino.write(b'c')
@@ -293,16 +304,19 @@ def acquire_image(force_compile=False):
         
         logger.debug("Capture command sent successfully")
         
-        # Receive and process image
-        image_data = receive_image_data(arduino)
+        # Receive and process image with longer timeout
+        image_data = receive_image_data(arduino, timeout=10)
+        
+        # Always close the connection
+        arduino.close()
+        
         if image_data is not None:
             # Save the grayscale image
             image = Image.fromarray(image_data, mode='L')  # 'L' mode for grayscale
             image.save('image.png')
             logger.debug("Grayscale image saved as 'image.png'")
-            return True  # Return True on successful image acquisition
+            return True
         else:
-            logger.error("Failed to receive image data")
             return False
 
     except KeyboardInterrupt:
@@ -312,6 +326,8 @@ def acquire_image(force_compile=False):
         return False
     except Exception as e:
         logger.error(f"Error: {str(e)}")
+        if 'arduino' in locals():
+            arduino.close()
         return False
 
 def threshold_image(image_path: str, output_path: str, threshold: int = 100):

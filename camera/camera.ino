@@ -21,17 +21,13 @@ void setup() {
 
   pinMode(LED_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);  // Configure button pin with internal pull-up resistor 
-  digitalWrite(LED_PIN, LOW);  // Start with LED on
+  digitalWrite(LED_PIN, HIGH);  // Start with LED on
 
   // Initialize the camera in grayscale mode
   if (!Camera.begin(QCIF, GRAYSCALE, 1)) {
     Serial.println("Failed to initialize camera!");
     while (1);
   }
-  
-  // Optionally set the camera parameters after initialization
-  // Camera.setBrightness(3);
-  // Camera.setContrast(2);
 }
 
 void loop() {
