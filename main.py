@@ -11,7 +11,7 @@ import select
 import cv2
 from typing import Union
 
-## --------- Terminal setup for colors and logging --------- ##
+## --------------------------- Terminal setup for colors and logging --------------------------- ##
 
 # ANSI escape codes for colors
 class Colors:
@@ -62,7 +62,7 @@ def setup_logging():
 
 logger = setup_logging()
 
-## --------- The actual Arduino code begins here, before it's just terminal setup --------- ##
+## --------------------------- The actual Arduino code begins here --------------------------- ##
 
 # Find the port where Arduino is connected.
 def find_arduino_port():
