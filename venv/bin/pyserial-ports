@@ -1,4 +1,4 @@
-#!/Users/giovannigravili/Downloads/arduino_test/venv/bin/python3
+#!/Users/giovannigravili/Downloads/mnist_arduino/venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

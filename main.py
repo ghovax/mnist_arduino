@@ -11,6 +11,8 @@ import select
 import cv2
 from typing import Union
 
+## --------- Terminal setup for colors and logging --------- ##
+
 # ANSI escape codes for colors
 class Colors:
     HEADER = '\033[95m'
@@ -189,8 +191,7 @@ def main():
             else:
                 logger.error("Failed to receive image data")
 
-            while True:
-                time.sleep(0.1)
+            raise KeyboardInterrupt
                     
     except KeyboardInterrupt:
         logger.warning("Closing connection...")
