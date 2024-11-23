@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 import select
 import cv2
+from typing import Union
 
 # ANSI escape codes for colors
 class Colors:
@@ -59,6 +60,9 @@ def setup_logging():
 
 logger = setup_logging()
 
+## --------- The actual Arduino code begins here, before it's just terminal setup --------- ##
+
+# Find the port where Arduino is connected.
 def find_arduino_port():
     """Find the port where Arduino is connected."""
     ports = list(serial.tools.list_ports.comports())
@@ -68,9 +72,10 @@ def find_arduino_port():
             return port.device
             
     port_list = [f"{p.device}: {p.description}" for p in ports]
-    logger.error(f"No Arduino found. Available ports: {', '.join(port_list)}")
+    logger.error(f"No Arduino found. Available ports: [{', '.join(port_list)}]")
     return None
 
+# Compile the Arduino sketch.
 def compile_sketch():
     """Compile the Arduino sketch."""
     logger.info("Compiling sketch...")
@@ -98,11 +103,12 @@ def compile_sketch():
         logger.error(f"Compilation failed after {elapsed_time:.1f}s: {error_msg}")
         return False
 
+# Flash the Arduino with the compiled hex file.
 def flash_arduino(port, hex_file):
     """Flash the Arduino with the provided hex file."""
     try:
         if not os.path.exists(hex_file):
-            logger.error(f"Cannot find {hex_file}")
+            logger.error(f"Cannot find {hex_file}, please compile the sketch first")
             return False
 
         logger.info("Flashing Arduino...")
@@ -132,56 +138,24 @@ def flash_arduino(port, hex_file):
         logger.error(f"Flash failed after {elapsed_time:.1f}s: {str(e)}")
         return False
 
-def read_camera_data(port):
-    """Read a single image frame from the Arduino and save it."""
-    logger.info("Capturing image...")
+def receive_image_data(arduino, width=176, height=144):
+    """Receive grayscale image data from Arduino."""
+    logger.info("Waiting for image data...")
     
-    frame_width = 176
-    frame_height = 144
-    frame_size = frame_width * frame_height
+    # Calculate expected bytes (1 byte per pixel for grayscale)
+    expected_bytes = width * height
     
-    try:
-        # First read any debug messages until we get to the actual image data
-        while True:
-            line = port.readline().decode('utf-8', errors='ignore').strip()
-            if line:
-                logger.critical(f"{line}")
-            if "Sending image data..." in line:
-                break
-        
-        time.sleep(0.1)  # Wait for Arduino to prepare data
-        port.reset_input_buffer()  # Clear any leftover data
-        
-        # Read the raw frame data
-        logger.info("Receiving image data from Arduino...")
-        raw_data = port.read(frame_size)
-        logger.debug(f"Successfully received {len(raw_data)} bytes of image data")
-            
-        if len(raw_data) != frame_size:
-            logger.error(f"Incomplete image data: received {len(raw_data)} of {frame_size} bytes")
-            return
-            
-        # Convert to numpy array and reshape
-        frame = np.frombuffer(raw_data, dtype=np.uint8)
-        frame = frame.reshape((frame_height, frame_width))
-        
-        # Save the grayscale image
-        cv2.imwrite("image.png", frame)
-        logger.debug("Saved image to file")
-        
-        # Read the final message
-        while True:
-            line = port.readline().decode('utf-8', errors='ignore').strip()
-            if line:
-                logger.critical(f"{line}")
-                if "Image sent successfully!" in line:
-                    break
-            
-    except Exception as e:
-        logger.error(f"Error capturing image: {e}")
-        port.close()
-        time.sleep(1)
-        port.open()
+    # Read the raw bytes
+    raw_data = arduino.read(expected_bytes)
+    if len(raw_data) != expected_bytes:
+        logger.error(f"Received incomplete data: {len(raw_data)} vs {expected_bytes} bytes")
+        return None
+    
+    # Convert raw bytes to numpy array and reshape to 2D
+    image_data = np.frombuffer(raw_data, dtype=np.uint8)
+    image_data = image_data.reshape((height, width))
+    
+    return image_data
 
 def main():
     try:
@@ -197,30 +171,29 @@ def main():
         if flash_arduino(port, hex_file):
             # Use higher baudrate for image data
             arduino = serial.Serial(port=port, baudrate=115200, timeout=5)
+            logger.warning("Waiting for Arduino to reset...")
             time.sleep(2)  # Wait for Arduino to reset
             
-            logger.info("Arduino connected! Press Ctrl+C to exit")
-            logger.info("Press the TinyML Shield button to capture an image...")
+            logger.debug("Arduino connected! Press Ctrl+C to exit")
+
+            # Send command to capture image
+            arduino.write(b'c')
             
-            # Clear any startup messages
-            while arduino.in_waiting:
-                line = arduino.readline().decode('utf-8', errors='ignore').strip()
-                if line:
-                    logger.critical(f"{line}")
-            
+            # Receive and process image
+            image_data = receive_image_data(arduino)
+            if image_data is not None:
+                # Save the grayscale image
+                image = Image.fromarray(image_data, mode='L')  # 'L' mode for grayscale
+                image.save('image.png')
+                logger.debug("Grayscale image saved as 'image.png'")
+            else:
+                logger.error("Failed to receive image data")
+
             while True:
-                # Check for any debug messages
-                if arduino.in_waiting:
-                    line = arduino.readline().decode('utf-8', errors='ignore').strip()
-                    if line:
-                        logger.critical(f"{line}")
-                        if "Button pressed!" in line:
-                            read_camera_data(arduino)
-                
-                time.sleep(0.1)  # Small delay to prevent tight CPU usage
+                time.sleep(0.1)
                     
     except KeyboardInterrupt:
-        logger.info("Closing connection...")
+        logger.warning("Closing connection...")
         if 'arduino' in locals():
             arduino.close()
     except Exception as e:
