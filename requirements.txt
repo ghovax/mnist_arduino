@@ -3,4 +3,5 @@ numpy
 Pillow
 opencv-python
 tensorflow
-matplotlib
+tensorflow-datasets
+psutil

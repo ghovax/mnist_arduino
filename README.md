@@ -54,6 +54,8 @@ python main.py
 5. Processes the image to create a transparent PNG where:
    - Dark pixels are preserved
    - Light pixels become transparent
+6. Sends the processed image to the MNIST model for evaluation
+7. Displays the predicted digit and the image fed to the model
 
 ### Output files
 
