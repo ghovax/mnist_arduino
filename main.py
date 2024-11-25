@@ -416,9 +416,7 @@ def main():
         )
 
         # Evaluate the processed image
-        top_3_str = evaluate_digit("artifacts/processed_image.png")
-        if top_3_str is not None:
-            logging.info(f"The most likely digits are: {top_3_str}")
+        evaluate_digit("artifacts/processed_image.png")
     else:
         logging.warning("Skipping image processing due to acquisition failure")
 
