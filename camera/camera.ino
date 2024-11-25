@@ -4,13 +4,14 @@
 #define IMAGE_WIDTH 176
 #define IMAGE_HEIGHT 144
 #define BYTES_PER_PIXEL 1
-#define BYTES_PER_FRAME (IMAGE_WIDTH * IMAGE_HEIGHT * BYTES_PER_PIXEL)
+#define ACTUAL_WIDTH 175  // Ignore the last column
+#define BYTES_PER_FRAME (ACTUAL_WIDTH * IMAGE_HEIGHT * BYTES_PER_PIXEL)
 
 const int LED_PIN = 13;
-const int BUTTON_PIN = 2;  // TinyML Shield button is on pin 2
 
 // Buffer for one frame
-uint8_t frame_buffer[BYTES_PER_FRAME];
+uint8_t frame_buffer[IMAGE_WIDTH * IMAGE_HEIGHT];
+uint8_t cleaned_buffer[BYTES_PER_FRAME];
 
 void setup() {
   // Initialize serial communication
@@ -20,24 +21,15 @@ void setup() {
   } 
 
   pinMode(LED_PIN, OUTPUT);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);  // Configure button pin with internal pull-up resistor 
-  digitalWrite(LED_PIN, HIGH);  // Start with LED on
 
   // Initialize the camera in grayscale mode
   if (!Camera.begin(QCIF, GRAYSCALE, 1)) {
-    Serial.println("Failed to initialize camera!");
+    // Fail silently, not a big deal
     while (1);
   }
 }
 
 void loop() {
-  // Read button state (LOW when pressed because of pull-up resistor)
-  if (digitalRead(BUTTON_PIN) == LOW) {
-    digitalWrite(LED_PIN, HIGH);   // Turn LED on when button is pressed
-  } else {
-    digitalWrite(LED_PIN, LOW);    // Turn LED off when button is released
-  }
-
   if (Serial.available() > 0) {
     char cmd = Serial.read();
     
@@ -45,11 +37,20 @@ void loop() {
       // Capture frame into buffer
       Camera.readFrame(frame_buffer);
       
-      // Send the entire frame over serial
-      Serial.write(frame_buffer, BYTES_PER_FRAME);
+      // Copy frame data excluding the last column
+      for (int y = 0; y < IMAGE_HEIGHT; y++) {
+        for (int x = 0; x < ACTUAL_WIDTH; x++) {
+          cleaned_buffer[y * ACTUAL_WIDTH + x] = frame_buffer[y * IMAGE_WIDTH + x];
+        }
+      }
+      
+      // Send the cleaned frame over serial
+      Serial.write(cleaned_buffer, BYTES_PER_FRAME);
       
       // Flush the serial buffer
       Serial.flush();
     }
   }
+
+  digitalWrite(LED_PIN, HIGH);
 } 
