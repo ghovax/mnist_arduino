@@ -26,20 +26,23 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
 # Ensure artifacts directory exists
-os.makedirs('artifacts', exist_ok=True)
+os.makedirs("artifacts", exist_ok=True)
+
 
 # After Flask initialization, add this custom logging handler
 class WebConsoleHandler(logging.Handler):
     def __init__(self, max_messages=1000):
         super().__init__()
         self.messages = Queue(maxsize=max_messages)
-        
+
     def emit(self, record):
         try:
             message = {
-                'timestamp': datetime.fromtimestamp(record.created).strftime('%H:%M:%S'),
-                'level': record.levelname,
-                'message': self.format(record)
+                "timestamp": datetime.fromtimestamp(record.created).strftime(
+                    "%H:%M:%S"
+                ),
+                "level": record.levelname,
+                "message": self.format(record),
             }
             if self.messages.full():
                 self.messages.get()  # Remove oldest message if queue is full
@@ -50,14 +53,16 @@ class WebConsoleHandler(logging.Handler):
     def get_messages(self):
         return list(self.messages.queue)
 
+
 # Initialize the web console handler
 web_handler = WebConsoleHandler()
-web_handler.setFormatter(logging.Formatter('%(message)s'))
+web_handler.setFormatter(logging.Formatter("%(message)s"))
 logging.getLogger().addHandler(web_handler)
 
 # Add these after Flask app initialization
 serial_connection = None
 serial_lock = Lock()
+
 
 def setup_argument_parser():
     """Configure command line argument parser."""
@@ -85,7 +90,9 @@ def find_arduino_port():
 
             # Test if port is actually available
             try:
-                test_connection = serial.Serial(port.device, baudrate=115200, timeout=0.1)
+                test_connection = serial.Serial(
+                    port.device, baudrate=115200, timeout=0.1
+                )
                 test_connection.close()
                 logging.info("Port is available for connection")
                 return port.device
@@ -197,12 +204,14 @@ def receive_image_data(arduino, width=176, height=144, timeout=5):
             continue
 
         chunk_size = len(chunk)
-        raw_data[received_bytes:received_bytes + chunk_size] = chunk
+        raw_data[received_bytes : received_bytes + chunk_size] = chunk
         received_bytes += chunk_size
 
         # Log progress for large transfers
         if received_bytes % 8192 == 0:
-            logging.info(f"Received {received_bytes}/{expected_bytes} bytes ({(received_bytes/expected_bytes)*100:.1f}%)")
+            logging.info(
+                f"Received {received_bytes}/{expected_bytes} bytes ({(received_bytes/expected_bytes)*100:.1f}%)"
+            )
 
     try:
         # Convert raw bytes to numpy array and reshape to 2D
@@ -250,11 +259,11 @@ def update_cached_sketch():
 def get_serial_connection():
     """Get or create serial connection to Arduino."""
     global serial_connection
-    
+
     with serial_lock:
         if serial_connection is not None and serial_connection.is_open:
             return serial_connection
-            
+
         port = find_arduino_port()
         if not port:
             return None
@@ -265,12 +274,12 @@ def get_serial_connection():
                 baudrate=115200,
                 timeout=2,
                 write_timeout=1,
-                inter_byte_timeout=None
+                inter_byte_timeout=None,
             )
-            
+
             if not connection.is_open:
                 connection.open()
-                
+
             if connection.is_open:
                 logging.info("Serial connection established!")
                 connection.reset_input_buffer()
@@ -278,7 +287,7 @@ def get_serial_connection():
                 time.sleep(0.5)
                 serial_connection = connection
                 return connection
-                
+
         except serial.SerialException as e:
             logging.error(f"Connection failed: {str(e)}")
             try:
@@ -286,7 +295,7 @@ def get_serial_connection():
             except:
                 pass
             return None
-    
+
     return None
 
 
@@ -294,7 +303,7 @@ def get_serial_connection():
 def acquire_image(force_compile=False):
     """Acquire image from Arduino camera."""
     global serial_connection
-    
+
     try:
         needs_flashing = has_sketch_changed() or force_compile
 
@@ -312,7 +321,7 @@ def acquire_image(force_compile=False):
             port = find_arduino_port()
             if not port or not flash_arduino(port, hex_file, timeout=30):
                 return False, None
-                
+
             # Close existing connection after flashing
             with serial_lock:
                 if serial_connection is not None:
@@ -336,21 +345,23 @@ def acquire_image(force_compile=False):
                 # Send capture command
                 bytes_written = arduino.write(b"c")
                 if bytes_written != 1:
-                    logging.error(f"Failed to send capture command (wrote {bytes_written} bytes)")
+                    logging.error(
+                        f"Failed to send capture command (wrote {bytes_written} bytes)"
+                    )
                     return False, None
 
                 logging.info("Capture command sent successfully")
 
                 # Receive and process image
                 image_data = receive_image_data(arduino, timeout=5)
-                
+
                 if image_data is not None:
                     image = Image.fromarray(image_data, mode="L")
                     image_path = "artifacts/acquired_image.png"
                     image.save(image_path)
                     logging.info(f"Grayscale acquired image saved to '{image_path}'")
                     return True, image
-                    
+
                 return False, None
 
             except Exception as e:
@@ -435,7 +446,7 @@ def evaluate_digit(image):
         probabilities = model.predict(img_array)
         predicted_digit = int(probabilities.argmax(axis=1)[0])
         confidence = float(probabilities[0][predicted_digit])
-        
+
         # Convert probabilities to list
         all_probabilities = [float(p) for p in probabilities[0]]
 
@@ -446,76 +457,71 @@ def evaluate_digit(image):
         return None, None, None
 
 
-@app.route('/')
+@app.route("/")
 def index():
     """Render the main page."""
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/capture', methods=['POST'])
+
+@app.route("/capture", methods=["POST"])
 def capture():
     """Handle image capture request."""
     global serial_connection
-    
+
     try:
         with serial_lock:
             if serial_connection is None or not serial_connection.is_open:
-                return jsonify({
-                    'success': False,
-                    'error': 'Not connected to Arduino'
-                })
-        
+                return jsonify({"success": False, "error": "Not connected to Arduino"})
+
         # Capture image
         success, image = acquire_image(force_compile=False)
-        
+
         if not success or image is None:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to acquire image from Arduino'
-            })
+            return jsonify(
+                {"success": False, "error": "Failed to acquire image from Arduino"}
+            )
 
         # Process the acquired image
         thresholded_image = threshold_image(image, threshold=100)
-        
+
         # Evaluate the processed image
         predicted_digit, confidence, probabilities = evaluate_digit(thresholded_image)
-        
+
         if predicted_digit is None:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to evaluate image'
-            })
+            return jsonify({"success": False, "error": "Failed to evaluate image"})
 
         # Convert images to base64 for sending to frontend
         def img_to_base64(img):
             buffered = BytesIO()
             img.save(buffered, format="PNG")
             img_str = base64.b64encode(buffered.getvalue()).decode()
-            return f'data:image/png;base64,{img_str}'
+            return f"data:image/png;base64,{img_str}"
 
         # Load the MNIST debug image
         mnist_debug_img = Image.open("artifacts/debug_mnist_input.png")
 
-        return jsonify({
-            'success': True,
-            'original_image': img_to_base64(image),
-            'threshold_image': img_to_base64(thresholded_image),
-            'mnist_image': img_to_base64(mnist_debug_img),
-            'predicted_digit': predicted_digit,
-            'confidence': confidence,
-            'probabilities': probabilities
-        })
+        return jsonify(
+            {
+                "success": True,
+                "original_image": img_to_base64(image),
+                "threshold_image": img_to_base64(thresholded_image),
+                "mnist_image": img_to_base64(mnist_debug_img),
+                "predicted_digit": predicted_digit,
+                "confidence": confidence,
+                "probabilities": probabilities,
+            }
+        )
 
     except Exception as e:
         logging.error(f"Error during capture: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        })
+        return jsonify({"success": False, "error": str(e)})
+
 
 # Add this new route to fetch log messages
-@app.route('/logs')
+@app.route("/logs")
 def get_logs():
     """Server-sent events handler for log messages."""
+
     def generate():
         last_message_count = 0
         while True:
@@ -526,7 +532,8 @@ def get_logs():
                 yield f"data: {json.dumps(new_messages)}\n\n"
             time.sleep(0.1)  # Small delay to prevent busy-waiting
 
-    return Response(generate(), mimetype='text/event-stream')
+    return Response(generate(), mimetype="text/event-stream")
+
 
 # Add cleanup function and register it to run on shutdown
 def cleanup():
@@ -541,14 +548,17 @@ def cleanup():
                 pass
             serial_connection = None
 
+
 import atexit
+
 atexit.register(cleanup)
 
-@app.route('/connect', methods=['POST'])
+
+@app.route("/connect", methods=["POST"])
 def connect_arduino():
     """Handle Arduino connection request."""
     global serial_connection
-    
+
     try:
         with serial_lock:
             # Close existing connection if any
@@ -558,13 +568,15 @@ def connect_arduino():
                 except:
                     pass
                 serial_connection = None
-            
+
             port = find_arduino_port()
             if not port:
-                return jsonify({
-                    'success': False,
-                    'error': 'Arduino not found. Please check the connection.'
-                })
+                return jsonify(
+                    {
+                        "success": False,
+                        "error": "Arduino not found. Please check the connection.",
+                    }
+                )
 
             try:
                 connection = serial.Serial(
@@ -572,26 +584,23 @@ def connect_arduino():
                     baudrate=115200,
                     timeout=2,
                     write_timeout=1,
-                    inter_byte_timeout=None
+                    inter_byte_timeout=None,
                 )
-                
+
                 if not connection.is_open:
                     connection.open()
-                    
+
                 if connection.is_open:
                     logging.info(f"Serial connection established on port {port}")
                     connection.reset_input_buffer()
                     connection.reset_output_buffer()
                     time.sleep(0.5)  # Give the Arduino time to reset
                     serial_connection = connection
-                    
-                    return jsonify({
-                        'success': True,
-                        'port': port
-                    })
+
+                    return jsonify({"success": True, "port": port})
                 else:
                     raise serial.SerialException("Failed to open port")
-                    
+
             except serial.SerialException as e:
                 logging.error(f"Connection failed: {str(e)}")
                 try:
@@ -599,18 +608,15 @@ def connect_arduino():
                         connection.close()
                 except:
                     pass
-                return jsonify({
-                    'success': False,
-                    'error': f'Failed to connect: {str(e)}'
-                })
+                return jsonify(
+                    {"success": False, "error": f"Failed to connect: {str(e)}"}
+                )
 
     except Exception as e:
         logging.error(f"Connection error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        })
+        return jsonify({"success": False, "error": str(e)})
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # Run the app on port 5050
-    app.run(debug=True, host='0.0.0.0', port=5050)
+    app.run(debug=True, host="0.0.0.0", port=5050)
