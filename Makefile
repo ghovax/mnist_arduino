@@ -24,10 +24,6 @@ $(VENV)/bin/activate:
 run: setup
 	$(PYTHON) $(FLASK_APP)
 
-# Run in development mode with debug
-dev: setup
-	FLASK_ENV=development $(PYTHON) $(FLASK_APP)
-
 # Clean build artifacts and generated files
 clean:
 	rm -rf build/
@@ -56,15 +52,3 @@ train:
 init:
 	mkdir -p artifacts
 	mkdir -p build
-
-# Help target
-help:
-	@echo "Available targets:"
-	@echo "  setup      - Create virtual environment and install dependencies"
-	@echo "  run        - Run the Flask application"
-	@echo "  dev        - Run in development mode with debug enabled"
-	@echo "  clean      - Remove build artifacts and generated files"
-	@echo "  clean-all  - Remove everything including virtual environment"
-	@echo "  install    - Install and configure arduino-cli"
-	@echo "  train      - Train the MNIST model"
-	@echo "  init       - Create required directories"

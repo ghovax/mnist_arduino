@@ -61,11 +61,6 @@ model.compile(
 )
 model.summary()
 
-# Compile the model
-model.compile(
-    optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"]
-)
-
 # Callbacks
 lr_reducer = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=3, min_lr=1e-6)
 early_stopping = EarlyStopping(
