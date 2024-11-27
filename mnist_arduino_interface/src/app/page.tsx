@@ -245,7 +245,7 @@ export default function ArduinoCameraRecognition() {
                   <img 
                     src={imageUrl} 
                     alt="Captured digit" 
-                    className="object-contain w-full"
+                    className="object-contain w-full image-pixelated"
                     onError={(e) => {
                       console.error("Image failed to load:", e);
                       setError("Failed to load image");

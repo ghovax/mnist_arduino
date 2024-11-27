@@ -146,3 +146,9 @@
 .glass-effect {
   @apply backdrop-blur-sm bg-background/80 border border-border/50;
 }
+
+/* Add this with your other custom utility classes */
+.image-pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
