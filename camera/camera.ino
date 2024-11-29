@@ -16,9 +16,7 @@ void setup() {
   Serial.begin(115200);
   while (!Serial) {
     ; // Wait for serial port to connect
-  } 
-
-  pinMode(LED_PIN, OUTPUT);
+  }
 
   // Initialize the camera in grayscale mode
   if (!Camera.begin(QCIF, GRAYSCALE, 1)) {
@@ -29,9 +27,9 @@ void setup() {
 
 void loop() {
   if (Serial.available() > 0) {
-    char cmd = Serial.read();
+    char command = Serial.read();
     
-    if (cmd == 'c') {  // Capture command
+    if (command == 'c') {  // Capture command
       // Capture frame into buffer
       Camera.readFrame(frame_buffer);
       

@@ -13,15 +13,12 @@ import argparse
 import tensorflow as tf
 from flask import Flask, jsonify
 import json
-from datetime import datetime
-from threading import Lock
 from io import BytesIO
 import base64
-from queue import Queue
-import threading
+from threading import Lock
 
-# Simplify logging to only essential messages
-logger = logging.getLogger()
+# Simplify logging to only essential messages (INFO and WARNING)
+logging.basicConfig(level=logging.INFO)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -29,8 +26,6 @@ app = Flask(__name__)
 # Add these after Flask app initialization
 serial_connection = None
 serial_lock = Lock()
-log_queue = Queue()
-log_lock = Lock()
 
 
 def setup_argument_parser():
@@ -131,16 +126,20 @@ def receive_image_data(arduino_connection, width=176, height=144, timeout=5):
             logging.error("Timeout waiting for image data")
             return None
 
-        data_chunk = arduino_connection.read(min(4096, expected_bytes - received_bytes))
+        data_chunk = arduino_connection.read(
+            min(4096, expected_bytes - received_bytes)
+        )
         if not data_chunk:
             continue
 
         chunk_size = len(data_chunk)
         image_buffer[received_bytes : received_bytes + chunk_size] = data_chunk
+
         received_bytes += chunk_size
 
     try:
         image_array = np.frombuffer(image_buffer, dtype=np.uint8)
+        logging.info(f"Received image data of shape: {image_array.shape}")
         return image_array.reshape((height, width))
     except Exception as error:
         logging.error(f"Failed to process image data: {str(error)}")
@@ -349,97 +348,59 @@ def evaluate_digit(input_image):
         return None, None, None
 
 
-class WebConsoleHandler(logging.Handler):
-    def emit(self, record):
-        with log_lock:
-            log_entry = {
-                "level": record.levelname,
-                "message": self.format(record),
-                "timestamp": datetime.now().isoformat(),
-            }
-            log_queue.put(log_entry)
-
-
-# Modify the logging setup
-logging.basicConfig(level=logging.WARNING)
+# Simplify logging setup
+logging.basicConfig(
+    level=logging.WARNING,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger()
-web_handler = WebConsoleHandler()
-logger.addHandler(web_handler)
 
 
 @app.route("/capture", methods=["POST"])
 def capture():
     """Handle image capture request."""
     global serial_connection
-    logs = []
 
     try:
-        # Collect any pending logs
-        while not log_queue.empty():
-            logs.append(log_queue.get_nowait())
-
         with serial_lock:
             if serial_connection is None or not serial_connection.is_open:
-                return jsonify(
-                    {
-                        "success": False,
-                        "errorMessage": "Not connected to Arduino",
-                        "logs": logs,
-                    }
-                )
+                return jsonify({
+                    "success": False,
+                    "errorMessage": "Not connected to Arduino"
+                })
 
         success, image = acquire_image(force_compile=False)
 
-        # Collect any new logs from the acquisition
-        while not log_queue.empty():
-            logs.append(log_queue.get_nowait())
-
         if not success or image is None:
-            return jsonify(
-                {
-                    "success": False,
-                    "errorMessage": "Failed to acquire image from Arduino",
-                    "logs": logs,
-                }
-            )
+            return jsonify({
+                "success": False,
+                "errorMessage": "Failed to acquire image from Arduino"
+            })
 
         thresholded_image = threshold_image(image, threshold=100)
         predicted_digit, confidence, probabilities = evaluate_digit(thresholded_image)
 
-        # Collect any final logs
-        while not log_queue.empty():
-            logs.append(log_queue.get_nowait())
-
         if predicted_digit is None:
-            return jsonify(
-                {
-                    "success": False,
-                    "errorMessage": "Failed to evaluate image",
-                    "logs": logs,
-                }
-            )
+            return jsonify({
+                "success": False,
+                "errorMessage": "Failed to evaluate image"
+            })
 
         buffered = BytesIO()
         image.save(buffered, format="PNG")
         encoded_image = base64.b64encode(buffered.getvalue()).decode()
 
-        return jsonify(
-            {
-                "success": True,
-                "originalImage": f"data:image/png;base64,{encoded_image}",
-                "predictedDigit": predicted_digit,
-                "confidence": confidence,
-                "probabilities": probabilities,
-                "logs": logs,
-            }
-        )
+        return jsonify({
+            "success": True,
+            "originalImage": f"data:image/png;base64,{encoded_image}",
+            "predictedDigit": predicted_digit,
+            "confidence": confidence,
+            "probabilities": probabilities
+        })
 
     except Exception as e:
         logging.error(f"Error during capture: {str(e)}")
-        # Collect any error logs
-        while not log_queue.empty():
-            logs.append(log_queue.get_nowait())
-        return jsonify({"success": False, "errorMessage": str(e), "logs": logs})
+        return jsonify({"success": False, "errorMessage": str(e)})
 
 
 # Add cleanup function and register it to run on shutdown

@@ -18,18 +18,6 @@ export default function ArduinoCameraRecognition() {
 
   const { toast } = useToast()
 
-  const handleServerLogs = (logs: Array<{level: string, message: string, timestamp: string}>) => {
-    logs.forEach(log => {
-      const cleanMessage = log.message.replace(/\[\d+m/g, '').replace(/\u001b/g, '')
-      const consoleMethod = log.level.toLowerCase() as keyof Console
-      if (typeof console[consoleMethod] === 'function') {
-        (console[consoleMethod] as (...args: any[]) => void)(`[${log.timestamp}] ${cleanMessage}`)
-      } else {
-        console.log(`[${log.timestamp}] ${log.level}: ${cleanMessage}`)
-      }
-    })
-  }
-
   const connectArduino = async () => {
     setConnectionStatus('connecting')
     setError(null)
@@ -56,10 +44,6 @@ export default function ArduinoCameraRecognition() {
         })
       } else {
         throw new Error(data.errorMessage || 'Failed to connect')
-      }
-
-      if (data.logs) {
-        handleServerLogs(data.logs)
       }
     } catch (error) {
       setConnectionStatus('disconnected')
@@ -104,10 +88,6 @@ export default function ArduinoCameraRecognition() {
       
       const data = await response.json()
       
-      if (data.logs) {
-        handleServerLogs(data.logs)
-      }
-
       console.log("Received response:", {
         success: data.success,
         hasImage: Boolean(data.originalImage),
