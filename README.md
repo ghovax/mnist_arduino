@@ -23,7 +23,7 @@ A real-time handwritten digit recognition system using Arduino Nano 33 BLE Sense
 1. Clone the repository
 2. Install dependencies with `make install`
 3. Run the development server with `make run`
-4. Navigate to the directory `mnist_arduino_interface` and check out the [README](mnist_arduino_interface/README.md) for information on running the Next.js web interface
+4. Navigate to the directory `interface` and check out the [README](interface/README.md) for information on running the Next.js web interface
 5. Connect to the Arduino and start recognizing digits at the link displayed in the terminal!
 
 ## License
